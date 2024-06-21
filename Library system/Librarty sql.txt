@@ -1,0 +1,367 @@
+DROP TABLE IF EXISTS issued_books;
+DROP TABLE IF EXISTS room_bookings;
+DROP TABLE IF EXISTS discussion_room;
+DROP TABLE IF EXISTS readers;
+DROP TABLE IF EXISTS stafflogin;
+DROP TABLE IF EXISTS staff;
+DROP TABLE IF EXISTS book;
+DROP TABLE IF EXISTS author;
+
+
+
+-- create author table
+create table author (
+    authorid int primary key,
+    name_ varchar(100),
+    age int,
+    qualification varchar(100)
+);
+
+-- create book table
+create table book (
+    bookid int primary key,
+    name_ varchar(100),
+    authorid int,
+genera varchar(25),
+    copies_unissued varchar(50),
+    copies int,
+    parentid int, -- assuming parent refers to a series or main book for related copies
+    rating decimal(5,1),
+    foreign key (authorid) references author(authorid) on delete cascade on update cascade
+);
+
+---staff
+create table staff (
+    staffid int primary key,
+    qualification varchar(100),
+    salary decimal(10,2),
+    join_date date,
+    occupation varchar(100)
+);
+
+create table stafflogin(
+    staffid int ,
+staffusername varchar(50) primary key,
+staffpassword varchar(25),
+foreign key (staffid) references staff(staffid) on delete cascade on update cascade
+);
+
+-- create readers table
+create table readers (
+    readerid int primary key,
+    name_ varchar(100),
+    birthdate date,
+    membership_status varchar(50),
+username varchar(50),
+password varchar(25),
+);
+
+-- create discussion room table
+create table discussion_room (
+    roomid int primary key,
+    locations varchar(100),
+)
+
+---drop table room_bookings
+-- create room bookings table
+create table room_bookings (
+    bookingid int primary key,
+roomid int,
+    time_ time,
+    date_ date,
+    bookerid int,
+    duration int, -- assuming duration is in minutes
+    foreign key (bookerid) references readers(readerid) on delete cascade on update cascade,
+foreign key (roomid) references discussion_room(roomid) on delete cascade on update cascade
+);
+
+
+
+-- create issued books table
+create table issued_books (
+    readerid int,
+    bookid int,
+    date_of_issue date,
+    due_date date,
+    date_returned date,
+primary key(readerid,bookid),
+    foreign key(readerid) references readers(readerid) on delete cascade on update cascade,      
+    foreign key (bookid) references book(bookid) on delete no action on update cascade
+)
+
+
+
+--checking availablity of the book for issuing it
+alter table book
+add status varchar(50) NOT NULL default 'Available';
+
+create trigger CheckBookAvailability
+on issued_books
+instead of insert
+as
+begin
+    declare @bookid int;
+
+    select @bookid = bookid
+    from inserted;
+
+    if EXISTS (select 1
+from book
+where bookid = @bookid AND status != 'Available' )
+    begin
+        RAISERROR ('The book is not available for issue', 16, 1);
+        ROLLBACK TRANSACTION;
+        return;
+    end;
+
+    insert into issued_books (readerid, bookid, date_of_issue, due_date)
+    select readerid, bookid, GETDATE(), DATEADD(day, 30, GETDATE())
+    from inserted;
+end;
+go
+create trigger UpdateBookStatusAfterIssuing
+on issued_books
+after insert
+as
+begin
+    declare @bookid int;
+
+    select @bookid = bookid
+    from inserted;
+
+    update book
+    set status = 'Issued'
+    where bookid = @bookid;
+end;
+go
+
+
+---
+-------seach by author
+--drop procedure SearchBooksByAuthor
+CREATE PROCEDURE SearchBooksByAuthor
+    @AuthorName VARCHAR(100)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT b.bookid, b.name_ AS book_name, a.name_ AS author_name, b.rating
+    FROM book b
+    INNER JOIN author a ON b.authorid = a.authorid
+    WHERE a.name_ LIKE '%' + @AuthorName + '%';
+END;
+
+INSERT INTO author (authorid, name_, age, qualification)
+VALUES
+(1, 'Harper Lee', 89, 'Bachelor of Arts in English'),
+(2, 'George Orwell', 46, 'Bachelor of Arts in English Literature'),
+(3, 'Jane Austen', 41, 'Bachelor of Arts in English Literature'),
+(4, 'F. Scott Fitzgerald', 44, 'Bachelor of Arts in English'),
+(5, 'J.D. Salinger', 91, 'Bachelor of Arts in English');
+
+INSERT INTO book (bookid, name_, authorid, genera, copies_unissued, copies, parentid, rating)
+VALUES
+(1, 'To Kill a Mockingbird', 1, 'Fiction', '10', 10, NULL, 4.5),
+(2, '1984', 2, 'Dystopian', '5', 5, NULL, 4.8),
+(3, 'Pride and Prejudice', 3, 'Romance', '8', 8, NULL, 4.7),
+(4, 'The Great Gatsby', 4, 'Fiction', '6', 6, NULL, 4.6),
+(5, 'The Catcher in the Rye', 5, 'Coming-of-age', '7', 7, NULL, 4.4);
+
+select* from book
+
+EXEC SearchBooksByAuthor @AuthorName = 'Harper Lee';
+
+
+-----seach by genera
+CREATE PROCEDURE SearchBooksByGenre
+    @Genre VARCHAR(25)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT b.bookid, b.name_ AS book_name, a.name_ AS author_name, b.rating
+    FROM book b
+    INNER JOIN author a ON b.authorid = a.authorid
+    WHERE b.genera = @Genre;
+END;
+
+EXEC SearchBooksByGenre @Genre = 'Fiction';
+
+----age vise recommendation
+CREATE PROCEDURE RecommendBooksByAgeAndGenre
+    @ReaderAge INT,
+    @Genre VARCHAR(25)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @MinAge INT, @MaxAge INT;
+
+    -- Define age range based on reader's age
+    IF @ReaderAge <= 12
+    BEGIN
+        SET @MinAge = 6;
+        SET @MaxAge = 12;
+    END
+    ELSE IF @ReaderAge <= 18
+    BEGIN
+        SET @MinAge = 13;
+        SET @MaxAge = 18;
+    END
+    ELSE
+    BEGIN
+        SET @MinAge = 19;
+        SET @MaxAge = 100; -- Assuming maximum age
+    END;
+
+    -- Recommend books within the specified age range and genre
+    SELECT b.bookid, b.name_ AS book_name, a.name_ AS author_name, b.rating
+    FROM book b
+    INNER JOIN author a ON b.authorid = a.authorid
+    WHERE b.genera = @Genre
+    AND @ReaderAge BETWEEN @MinAge AND @MaxAge;
+END;
+
+EXEC RecommendBooksByAgeAndGenre @ReaderAge = 9, @Genre = 'Romance';
+
+
+----top best selling
+CREATE PROCEDURE GetTopBestSellers
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT TOP 5 b.bookid, b.name_ AS book_name, a.name_ AS author_name, b.rating, COUNT(*) AS copies_issued
+    FROM book b
+    INNER JOIN author a ON b.authorid = a.authorid
+    INNER JOIN issued_books ib ON b.bookid = ib.bookid
+    GROUP BY b.bookid, b.name_, a.name_, b.rating
+    ORDER BY copies_issued DESC;
+END;
+
+
+
+EXEC GetTopBestSellers;
+
+INSERT INTO readers (readerid, name_, birthdate, membership_status, username, password)
+VALUES (1, 'Alice Johnson', '2000-01-15', 'Active', 'alice123', 'password1'),
+       (2, 'Bob Smith', '1995-05-20', 'Active', 'bob456', 'password2'),
+       (3, 'Emily Davis', '2002-09-10', 'Active', 'emily789', 'password3'),
+       (4, 'John Doe', '1998-03-08', 'Active', 'john789', 'password4'),
+       (5, 'Sophia Wilson', '2004-07-25', 'Active', 'sophia123', 'password5'),
+       (6, 'Daniel Brown', '1993-11-30', 'Active', 'daniel456', 'password6'),
+       (7, 'Olivia Miller', '2001-04-12', 'Active', 'olivia789', 'password7');
+
+INSERT INTO issued_books (readerid, bookid, date_of_issue, due_date, date_returned)
+VALUES (1, 1, '2024-04-01', '2024-04-30', NULL),
+       (2, 2, '2024-04-05', '2024-05-05', NULL),
+       (3, 3, '2024-04-10', '2024-05-10', NULL),
+       (4, 4, '2024-04-15', '2024-05-15', NULL),
+       (5, 5, '2024-04-20', '2024-05-20', NULL),
+       (1, 2, '2024-04-25', '2024-05-25', NULL);
+
+
+----top trending
+--drop procedure GetTopTrendingBooks
+CREATE PROCEDURE GetTopTrendingBooks
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT TOP 5 b.bookid, b.name_ AS book_name, a.name_ AS author_name, b.rating, COUNT(*) AS copies_issued
+    FROM book b
+    INNER JOIN author a ON b.authorid = a.authorid
+    INNER JOIN issued_books ib ON b.bookid = ib.bookid
+    GROUP BY b.bookid, b.name_, a.name_, b.rating
+    ORDER BY b.rating DESC, copies_issued DESC;
+END;
+
+EXEC GetTopTrendingBooks;
+
+----display book series
+--drop procedure DisplayBookSeries
+CREATE PROCEDURE DisplayBookSeries
+    @SeriesName VARCHAR(100)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT DISTINCT b.bookid, b.name_ AS book_name, b.authorid
+    FROM book b
+    WHERE b.parentid = (
+        SELECT bookid
+        FROM book
+        WHERE name_ = @SeriesName
+    );
+END;
+
+
+EXEC DisplayBookSeries @SeriesName = 'Harry Potter and the Sorcerer''s Stone';
+
+-- Main book of the series
+INSERT INTO book (bookid, name_, authorid, genera, copies_unissued, copies, parentid, rating )
+VALUES (6, 'Harry Potter and the Sorcerer''s Stone', 1,'Fantasy', '10', 10, NULL, 4.8 );
+
+-- Subsequent books in the series
+INSERT INTO book (bookid, name_, authorid,genera, copies_unissued, copies, parentid, rating )
+VALUES (7, 'Harry Potter and the Chamber of Secrets', 1,'Fantasy', '10', 10, 6, 4.9 ),
+       (8, 'Harry Potter and the Prisoner of Azkaban', 1, 'Fantasy','10', 10, 6, 5 ),
+       (9, 'Harry Potter and the Goblet of Fire', 1,'Fantasy', '10', 10, 6, 4.7),
+       (10, 'Harry Potter and the Order of the Phoenix', 1,'Fantasy', '10', 10, 6, 4.7),
+       (11, 'Harry Potter and the Half-Blood Prince', 1,'Fantasy', '10', 10, 6, 4.9),
+       (12, 'Harry Potter and the Deathly Hallows', 1,'Fantasy', '10', 10, 6, 4.8);
+
+
+--- book recommendation based on history
+
+
+
+select * from readers
+
+---liberarian qualification detail
+-- drop procedure DisplayLibrarianQualifications
+CREATE PROCEDURE DisplayLibrarianQualifications
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT staffid, qualification
+    FROM staff
+    ---WHERE occupation = 'Librarian';
+END;
+
+EXEC DisplayLibrarianQualifications;
+
+INSERT INTO staff (staffid, qualification, salary, join_date, occupation)
+VALUES (1, 'Bachelor of Library Science', 45000.00, '2020-01-15', 'Librarian'),
+       (2, 'Master of Library and Information Science', 55000.00, '2018-05-20', 'Librarian'),
+       (3, 'Bachelor of Arts in English', 40000.00, '2019-09-10', 'Assistant Librarian'),
+       (4, 'Bachelor of Science in Information Technology', 50000.00, '2021-03-08', 'Assistant Librarian'),
+       (5, 'Master of Arts in Library and Information Studies', 60000.00, '2017-07-25', 'Head Librarian');
+
+
+-----seach by genera
+CREATE PROCEDURE SearchBooksByGenre
+    @Genre VARCHAR(25)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT b.bookid, b.name_ AS book_name, a.name_ AS author_name, b.rating
+    FROM book b
+    INNER JOIN author a ON b.authorid = a.authorid
+    WHERE b.genera = @Genre;
+END;
+
+EXEC SearchBooksByGenre @Genre = 'Fiction';
+
+
+///trigger
+CREATE TRIGGER protection
+on database
+for ALTER_TABLE, DROP_TABLE
+as
+begin
+print('u can not alter any table')
+rollback
+end
